@@ -72,7 +72,7 @@ function startNote(w, h, soft) {
     const time = audioContext.currentTime;
     gainNode.gain.cancelScheduledValues(time);
     gainNode.gain.setValueAtTime(current, time);
-    const targetGain = soft ? 0.3 : 1;
+    const targetGain = soft ? 0.06 : 0.2;
     if (current < 0.2 * targetGain) {
         gainNode.gain.linearRampToValueAtTime(0.2 * targetGain, time + 0.05);
     }
@@ -426,12 +426,16 @@ function updateTunings() {
             hMultiplier = Math.pow(2, equalHalf / divisions);
         }
         break;
-    case "just-fifth":
-        // The choice uniquely determined by
+    case "pythagorean":
+        // This is uniquely determined by
         // - exact just octaves (frequency ratio 2) from 5 whole + 2 half
         // - exact just fifths (frequency ratio 3/2) from 3 whole + 1 half
         wMultiplier = 9/8;
         hMultiplier = 256/243;
+        break;
+    case "quarter-comma":
+        wMultiplier = Math.sqrt(5) / 2;
+        hMultiplier = 1.6 * Math.pow(5, -1/4);
         break;
     case "minimax":
         // The choice that minimizes the maximum error of
@@ -628,7 +632,8 @@ Tuning:
 </label>
 </fieldset>
 <fieldset>
-<label><input type="radio" name="tuning" value="just-fifth" oninput="updateTunings();">Just Octave/Fifth</label>
+<label><input type="radio" name="tuning" value="pythagorean" oninput="updateTunings();">Pythagorean</label>
+<label><input type="radio" name="tuning" value="quarter-comma" oninput="updateTunings();">Quarter-comma Meantone</label>
 <label><input type="radio" name="tuning" value="minimax" oninput="updateTunings();">Minimax Fifth/Third, Just Octave</label>
 <label><input type="radio" name="tuning" value="minimax3" oninput="updateTunings();">Minimax Octave/Fifth/Third</label>
 </fieldset>
