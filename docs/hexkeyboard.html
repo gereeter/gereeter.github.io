@@ -507,7 +507,7 @@ function updateVoicings() {
     for (const [h, row] of nodes) {
         for (const [w, node] of row) {
             if (voicing instanceof PeriodicWave) {
-                node.oscillator.setPeriodicWave(periodicWave);
+                node.oscillator.setPeriodicWave(voicing);
             } else {
                 node.oscillator.type = voicing;
             }
