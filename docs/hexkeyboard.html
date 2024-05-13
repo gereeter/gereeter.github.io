@@ -9,10 +9,9 @@ let audioContext = null;
 const nodes = new Map();
 const visualElements = new Map();
 
-// Tuning
+// Tuning: we support any regular diatonic tuning system
 let basePitch = 440;
-let wMultiplier = Math.pow(2, 2/12);
-let hMultiplier = Math.pow(2, 1/12);
+let tuning = { wRatio: Math.pow(2, 2/12), hRatio: Math.pow(2, 1/12) };
 // Voicing
 let voicing = "sine";
 
@@ -35,7 +34,7 @@ function startNote(w, h, soft) {
         updateTunings();
         updateVoicings();
 
-        const oscillatorSettings = { frequency: basePitch * Math.pow(wMultiplier, w) * Math.pow(hMultiplier, h) };
+        const oscillatorSettings = { frequency: basePitch * Math.pow(tuning.wRatio, w) * Math.pow(tuning.hRatio, h) };
         if (voicing instanceof PeriodicWave) {
             oscillatorSettings.periodicWave = voicing;
         } else {
@@ -393,81 +392,81 @@ window.addEventListener("resize", updateKeyboard);
 
 ///// Keep the tuning form state synced with itself and the values being played. /////
 
+function tuningEDO(divisions, wholeStep, halfStep) {
+    return {
+        wRatio: Math.pow(2, wholeStep / divisions),
+        hRatio: Math.pow(2, halfStep / divisions),
+    };
+}
+
+// Finds Ratios assuming constant fifths and just octaves
+function tuningFromFifth(fifth) {
+    const fifth2 = fifth * fifth;
+    return {
+        wRatio: fifth2 / 2, // 2 fifths = 1 octave + 1 whole step
+        hRatio: 8 / (fifth2 * fifth2 * fifth), // 5 fifths + 1 half step = 3 octaves
+    };
+}
+
+const tuningMapping = new Map([
+    // Notable equal divisions of the octave
+    ["12-equal", tuningEDO(12, 2, 1)],
+    ["17-equal", tuningEDO(17, 3, 1)],
+    ["19-equal", tuningEDO(19, 3, 2)],
+    ["22-equal", tuningEDO(22, 4, 1)],
+    ["31-equal", tuningEDO(31, 5, 3)],
+    ["53-equal", tuningEDO(53, 9, 4)],
+    // Tunings based on peaks of the Riemann zeta function
+    // Values taken from https://en.xen.wiki/w/The_Riemann_zeta_function_and_tuning#Zeta_edo_lists
+    ["12-zeta", tuningEDO(12.02318, 2, 1)],
+    ["19-zeta", tuningEDO(18.94809, 3, 2)],
+    ["22-zeta", tuningEDO(22.02515, 4, 1)],
+    ["31-zeta", tuningEDO(30.97838, 5, 3)],
+    ["41-zeta", tuningEDO(40.98808, 7, 3)],
+    ["53-zeta", tuningEDO(52.99683, 9, 4)],
+    // Meantones and direct attempts at just intonation
+    ["pythagorean", tuningFromFifth(3 / 2)],
+    ["quarter-comma", tuningFromFifth(Math.pow(5, 1 / 4))],
+    ["septimal", tuningFromFifth(Math.pow(56, 1 / 10))],
+    // The choice that minimizes the maximum error of
+    // - just fifths (frequency ratio 3/2) from 3 whole + 1 half
+    // - just major thirds (frequency ratio 5/4) from 2 whole
+    // Under the constraint that there are
+    // - exact just octaves (frequency ratio 2) from 5 whole + 2 half
+    // The maximum error is a fifth of syntonic comma.
+    ["minimax", { wRatio: Math.pow(225/128, 1/5), hRatio: 16/15 }],
+    // The choice that minimizes the maximum error of
+    // - just fifths (frequency ratio 3/2) from 3 whole + 1 half
+    // - just major thirds (frequency ratio 5/4) from 2 whole
+    // - just octaves (frequency ratio 2)
+    // The maximum error is a seventh of a syntonic comma.
+    ["minimax3", { wRatio: Math.pow(1125/512, 1/7), hRatio: 1.6 * Math.pow(8 / 135, 1/7) }],
+]);
+
 function updateTunings() {
-    // We'll be called again in startNote;
+    // We'll be called again in startNote.
     if (audioContext === null) { return; }
 
-    const formData = new FormData(document.getElementById("tuningForm"));
-    switch (formData.get("tuning")) {
-    case "12-equal":
-        wMultiplier = Math.pow(2, 2/12);
-        hMultiplier = Math.pow(2, 1/12);
-        break;
-    case "17-equal":
-        wMultiplier = Math.pow(2, 3/17);
-        hMultiplier = Math.pow(2, 1/17);
-        break;
-    case "19-equal":
-        wMultiplier = Math.pow(2, 3/19);
-        hMultiplier = Math.pow(2, 2/19);
-        break;
-    case "22-equal":
-        wMultiplier = Math.pow(2, 4/22);
-        hMultiplier = Math.pow(2, 1/22);
-        break;
-    case "31-equal":
-        wMultiplier = Math.pow(2, 5/31);
-        hMultiplier = Math.pow(2, 3/31);
-        break;
-    case "53-equal":
-        wMultiplier = Math.pow(2, 9/53);
-        hMultiplier = Math.pow(2, 4/53);
-        break;
+    const tuningName = new FormData(document.getElementById("tuningForm")).get("tuning");
+    switch (tuningName) {
     case "custom-equal":
         const divisions = document.getElementById("equalDivisions").valueAsNumber;
         const equalWhole = document.getElementById("equalWholeStep").valueAsNumber;
         const equalHalf = document.getElementById("equalHalfStep").valueAsNumber;
         if (equalWhole >= 1 && equalHalf >= 1) {
-            wMultiplier = Math.pow(2, equalWhole / divisions);
-            hMultiplier = Math.pow(2, equalHalf / divisions);
+            tuning = tuningEDO(divisions, equalWhole, equalHalf);
         }
         break;
-    case "pythagorean":
-        // This is uniquely determined by
-        // - exact just octaves (frequency ratio 2) from 5 whole + 2 half
-        // - exact just fifths (frequency ratio 3/2) from 3 whole + 1 half
-        wMultiplier = 9/8;
-        hMultiplier = 256/243;
-        break;
-    case "quarter-comma":
-        wMultiplier = Math.sqrt(5) / 2;
-        hMultiplier = 1.6 * Math.pow(5, -1/4);
-        break;
-    case "minimax":
-        // The choice that minimizes the maximum error of
-        // - just fifths (frequency ratio 3/2) from 3 whole + 1 half
-        // - just major thirds (frequency ratio 5/4) from 2 whole
-        // Under the constraint that there are
-        // - exact just octaves (frequency ratio 2) from 5 whole + 2 half
-        // The maximum error is a fifth of syntonic comma.
-        wMultiplier = Math.pow(225/128, 1/5);
-        hMultiplier = 16/15;
-        break;
-    case "minimax3":
-        // The choice that minimizes the maximum error of
-        // - just fifths (frequency ratio 3/2) from 3 whole + 1 half
-        // - just major thirds (frequency ratio 5/4) from 2 whole
-        // - just octaves (frequency ratio 2)
-        // The maximum error is a seventh of a syntonic comma.
-        wMultiplier = Math.pow(1125/512, 1/7);
-        hMultiplier = 1.6 * Math.pow(8 / 135, 1/7);
-        break;
     case "custom":
-        const customWMultiplier = document.getElementById("wholeStep").valueAsNumber;
-        const customHMultiplier = document.getElementById("halfStep").valueAsNumber;
-        if (customWMultiplier >= 1 && customHMultiplier >= 1) {
-            wMultiplier = customWMultiplier;
-            hMultiplier = customHMultiplier;
+        const customWRatio = document.getElementById("wholeStep").valueAsNumber;
+        const customHRatio = document.getElementById("halfStep").valueAsNumber;
+        if (customWRatio >= 1 && customHRatio >= 1) {
+            tuning = { wRatio: customWRatio, hRatio: customHRatio };
+        }
+        break;
+    default:
+        if (tuningMapping.has(tuningName)) {
+            tuning = tuningMapping.get(tuningName);
         }
         break;
     }
@@ -479,7 +478,7 @@ function updateTunings() {
 
     for (const [h, row] of nodes) {
         for (const [w, node] of row) {
-            node.oscillator.frequency.setValueAtTime(basePitch * Math.pow(wMultiplier, w) * Math.pow(hMultiplier, h), audioContext.currentTime);
+            node.oscillator.frequency.setValueAtTime(basePitch * Math.pow(tuning.wRatio, w) * Math.pow(tuning.hRatio, h), audioContext.currentTime);
         }
     }
 }
@@ -641,8 +640,19 @@ Tuning:
 <fieldset>
 <label><input type="radio" name="tuning" value="pythagorean" oninput="updateTunings();">Pythagorean</label>
 <label><input type="radio" name="tuning" value="quarter-comma" oninput="updateTunings();">Quarter-comma Meantone</label>
+<label><input type="radio" name="tuning" value="septimal" oninput="updateTunings();">Septimal Meantone</label>
+</fieldset>
+<fieldset>
 <label><input type="radio" name="tuning" value="minimax" oninput="updateTunings();">Minimax Fifth/Third, Just Octave</label>
 <label><input type="radio" name="tuning" value="minimax3" oninput="updateTunings();">Minimax Octave/Fifth/Third</label>
+</fieldset>
+<fieldset>
+<label><input type="radio" name="tuning" value="12-zeta" oninput="updateTunings();">Zeta 12-tone equal</label>
+<label><input type="radio" name="tuning" value="19-zeta" oninput="updateTunings();">Zeta 19-tone equal</label>
+<label><input type="radio" name="tuning" value="22-zeta" oninput="updateTunings();">Zeta 22-tone equal</label>
+<label><input type="radio" name="tuning" value="31-zeta" oninput="updateTunings();">Zeta 31-tone equal</label>
+<label><input type="radio" name="tuning" value="41-zeta" oninput="updateTunings();">Zeta 41-tone equal</label>
+<label><input type="radio" name="tuning" value="53-zeta" oninput="updateTunings();">Zeta 53-tone equal</label>
 </fieldset>
 <fieldset>
 <label><input type="radio" name="tuning" value="custom" oninput="updateTunings();">Custom —
