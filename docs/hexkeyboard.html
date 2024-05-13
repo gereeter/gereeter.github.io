@@ -240,6 +240,12 @@ function handleMouseRelease(event) {
     endNote(+event.target.dataset.w, +event.target.dataset.h);
 }
 
+function handleMouseLeave(event) {
+    if ((event.buttons & 1) !== 0) {
+        handleMouseRelease(event);
+    }
+}
+
 function handleTouchPress(event) {
     startNote(+event.target.dataset.w, +event.target.dataset.h, event.shiftKey);
     event.preventDefault();
@@ -320,7 +326,7 @@ function updateKeyboard() {
                 polygon.addEventListener("mouseenter", handleMousePress);
                 polygon.addEventListener("touchstart", handleTouchPress);
                 polygon.addEventListener("mouseup", handleMouseRelease);
-                polygon.addEventListener("mouseleave", handleMouseRelease);
+                polygon.addEventListener("mouseleave", handleMouseLeave);
                 polygon.addEventListener("touchend", handleTouchRelease);
                 svg.appendChild(polygon);
 
