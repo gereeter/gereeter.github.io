@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<head>
+<meta charset="utf-8">
+<meta name="color-scheme" content="light dark">
+<title>Isomorphic Hex Keyboard</title>
+<script>
+// UI state
+let audioContext = null;
+const nodes = new Map();
+const visualElements = new Map();
+
+// Tuning
+let basePitch = 440;
+let wMultiplier = Math.pow(2, 2/12);
+let hMultiplier = Math.pow(2, 1/12);
+// Voicing
+let voicing = "sine";
+
+// Pedals
+let sustain = false;
+
+
+///// Core audio functionality /////
+
+function startNote(w, h, soft) {
+    if (audioContext === null) {
+        audioContext = new AudioContext();
+    }
+
+    if (!nodes.has(h)) {
+        nodes.set(h, new Map());
+    }
+    const row = nodes.get(h);
+    if (!row.has(w)) {
+        updateTunings();
+        updateVoicings();
+
+        const oscillatorSettings = { frequency: basePitch * Math.pow(wMultiplier, w) * Math.pow(hMultiplier, h) };
+        if (voicing instanceof PeriodicWave) {
+            oscillatorSettings.periodicWave = voicing;
+        } else {
+            oscillatorSettings.type = voicing;
+        }
+        let oscillator = new OscillatorNode(audioContext, oscillatorSettings);
+        oscillator.start();
+
+        const gain = new GainNode(audioContext, {
+            gain: 0,
+        });
+        oscillator.connect(gain);
+        gain.connect(audioContext.destination);
+
+        row.set(w, { oscillator: oscillator, gain: gain, active: false });
+    }
+    const note = row.get(w);
+
+    if (note.active) {
+        // This is hopefully caught by filtering on event.repeat, but that's not reliable.
+        return;
+    }
+    note.active = true;
+    if (visualElements.has(h)) {
+        const visualRow = visualElements.get(h);
+        if (visualRow.has(w)) {
+            const visual = visualRow.get(w);
+            visual.classList.add("active");
+        }
+    }
+    
+    const gainNode = note.gain;
+    const current = gainNode.gain.value;
+    const time = audioContext.currentTime;
+    gainNode.gain.cancelScheduledValues(time);
+    gainNode.gain.setValueAtTime(current, time);
+    const targetGain = soft ? 0.3 : 1;
+    if (current < 0.2 * targetGain) {
+        gainNode.gain.linearRampToValueAtTime(0.2 * targetGain, time + 0.05);
+    }
+    gainNode.gain.linearRampToValueAtTime(current + targetGain, time + 0.1);
+    gainNode.gain.linearRampToValueAtTime(Math.max(current, targetGain), time + 0.15);
+}
+
+function endNote(w, h) {
+    if (!nodes.has(h)) { return; }
+    const row = nodes.get(h);
+    if (!row.has(w)) { return; }
+    const note = row.get(w);
+    note.active = false;
+    if (visualElements.has(h)) {
+        const visualRow = visualElements.get(h);
+        if (visualRow.has(w)) {
+            const visual = visualRow.get(w);
+            visual.classList.remove("active");
+        }
+    }
+
+    if (sustain) {
+        return;
+    }
+
+    const gainNode = note.gain;
+    const current = gainNode.gain.value;
+    const time = audioContext.currentTime;
+    gainNode.gain.cancelScheduledValues(time);
+    gainNode.gain.setValueAtTime(current, time);
+    if (current > 0.2) {
+        gainNode.gain.linearRampToValueAtTime(0.2, time + 0.1);
+    }
+    if (current > 0) {
+        gainNode.gain.linearRampToValueAtTime(0, time + 0.25);
+    }
+}
+
+function startSustain() {
+    sustain = true;
+}
+
+function endSustain() {
+    if (sustain) {
+        sustain = false;
+        for (const [h, row] of nodes) {
+            for (const [w, note] of row) {
+                if (!note.active) {
+                    endNote(w, h);
+                }
+            }
+        }
+    }
+}
+
+function endAll() {
+    sustained = null;
+    for (const row of nodes.values()) {
+        for (const note of row.values()) {
+            note.gain.gain.setValueAtTime(0, audioContext.currentTime);
+        }
+    }
+    nodes.clear();
+    for (const visualRow of visualElements.values()) {
+        for (const visual of visualRow.values()) {
+            visual.classList.remove("active");
+        }
+    }
+}
+
+
+///// Keyboard Interface /////
+
+const keyMapping = new Map([
+    ["Backquote",    { w: -7, h: -2 }],
+    ["Digit1",       { w: -6, h: -2 }],
+    ["Digit2",       { w: -5, h: -2 }],
+    ["Digit3",       { w: -4, h: -2 }],
+    ["Digit4",       { w: -3, h: -2 }],
+    ["Digit5",       { w: -2, h: -2 }],
+    ["Digit6",       { w: -1, h: -2 }],
+    ["Digit7",       { w:  0, h: -2 }],
+    ["Digit8",       { w:  1, h: -2 }],
+    ["Digit9",       { w:  2, h: -2 }],
+    ["Digit0",       { w:  3, h: -2 }],
+    ["Minus",        { w:  4, h: -2 }],
+    ["Equal",        { w:  5, h: -2 }],
+    ["KeyQ",         { w: -6, h: -1 }],
+    ["KeyW",         { w: -5, h: -1 }],
+    ["KeyE",         { w: -4, h: -1 }],
+    ["KeyR",         { w: -3, h: -1 }],
+    ["KeyT",         { w: -2, h: -1 }],
+    ["KeyY",         { w: -1, h: -1 }],
+    ["KeyU",         { w:  0, h: -1 }],
+    ["KeyI",         { w:  1, h: -1 }],
+    ["KeyO",         { w:  2, h: -1 }],
+    ["KeyP",         { w:  3, h: -1 }],
+    ["BracketLeft",  { w:  4, h: -1 }],
+    ["BracketRight", { w:  5, h: -1 }],
+    ["KeyA",         { w: -6, h:  0 }],
+    ["KeyS",         { w: -5, h:  0 }],
+    ["KeyD",         { w: -4, h:  0 }],
+    ["KeyF",         { w: -3, h:  0 }],
+    ["KeyG",         { w: -2, h:  0 }],
+    ["KeyH",         { w: -1, h:  0 }],
+    ["KeyJ",         { w:  0, h:  0 }],
+    ["KeyK",         { w:  1, h:  0 }],
+    ["KeyL",         { w:  2, h:  0 }],
+    ["Semicolon",    { w:  3, h:  0 }],
+    ["Quote",        { w:  4, h:  0 }],
+    ["KeyZ",         { w: -6, h:  1 }],
+    ["KeyX",         { w: -5, h:  1 }],
+    ["KeyC",         { w: -4, h:  1 }],
+    ["KeyV",         { w: -3, h:  1 }],
+    ["KeyB",         { w: -2, h:  1 }],
+    ["KeyN",         { w: -1, h:  1 }],
+    ["KeyM",         { w:  0, h:  1 }],
+    ["Comma",        { w:  1, h:  1 }],
+    ["Period",       { w:  2, h:  1 }],
+    ["Slash",        { w:  3, h:  1 }],
+]);
+
+window.addEventListener("keydown", function(event) {
+    if (event.key === "Escape") {
+        endAll();
+        return;
+    }
+
+    if (event.ctrlKey || event.altKey || event.metaKey) { return; }
+    if (event.target.nodeName === "INPUT" && event.target.type === "number") { return; }
+
+    if (event.key === " ") {
+        startSustain();
+    } else if (keyMapping.has(event.code)) {
+        const position = keyMapping.get(event.code);
+        if (!event.repeat) {
+            startNote(position.w, position.h, event.shiftKey);
+        }
+    } else {
+        return;
+    }
+
+    event.preventDefault();
+});
+window.addEventListener("keyup", function(event) {
+    if (event.key === " ") {
+        endSustain();
+    } else if (keyMapping.has(event.code)) {
+        const position = keyMapping.get(event.code);
+        
+        endNote(position.w, position.h);
+    }
+});
+
+
+///// Spatial/Visual Interface /////
+
+function handleMousePress(event) {
+    if (event.buttons === 1) {
+        startNote(+event.target.dataset.w, +event.target.dataset.h, event.shiftKey);
+    }
+}
+
+function handleMouseRelease(event) {
+    endNote(+event.target.dataset.w, +event.target.dataset.h);
+}
+
+function handleTouchPress(event) {
+    startNote(+event.target.dataset.w, +event.target.dataset.h, event.shiftKey);
+    event.preventDefault();
+}
+
+function handleTouchRelease(event) {
+    endNote(+event.target.dataset.w, +event.target.dataset.h);
+}
+
+function updateKeyboard() {
+    visualElements.clear();
+    // There are approximately `scale` keys horizontally across the page
+    const scale = Math.pow(2, -document.getElementById("keysize").valueAsNumber);
+    const labelMode = new FormData(document.getElementById("keyboardForm")).get("labelMode");
+
+    const svgNs = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(svgNs, "svg");
+    const aspectRatio = document.documentElement.clientHeight / document.documentElement.clientWidth;
+    // Each key has radius 1
+    svg.setAttribute("viewBox", "" + (-scale) + " " + (-aspectRatio*scale) + " " + (2*scale) + " " + (2*scale*aspectRatio));
+    svg.setAttribute("width", "100%");
+
+    // Vectors between the keys in each direction. Note that these are half of the way from key to key, as
+    // they have unit magnitude. This tilt is chosen so that octaves are perfectly horizontal.
+    const sqrt3 = Math.sqrt(3);
+    const invSqrt13 = 1 / Math.sqrt(13);
+    const wholeX = 2 * sqrt3 * invSqrt13;
+    const wholeY = -invSqrt13;
+    const halfX = 1.5 * sqrt3 * invSqrt13;
+    const halfY = 2.5 * invSqrt13;
+
+    // The corners of a hexagon, relative to its center.
+    const hexScale = 1;
+    const hexX1 = -wholeY * hexScale;
+    const hexY1 = wholeX * hexScale;
+    const hexX2 = -halfY * hexScale;
+    const hexY2 = halfX * hexScale;
+    const hexX3 = (wholeY - halfY) * hexScale;
+    const hexY3 = (halfX - wholeX) * hexScale;
+    
+    // We want the center to be in between -2,0 and -1,-1 (i.e. in the middle of the C major scale), and then to render
+    // every hexagon potentially within the box. To do this we measure the Euclidean distance to the corner, then scale it
+    // up to an upper bound on hexagonal taxicab distance.
+    const radiusBound = Math.floor(Math.hypot(1, aspectRatio) * scale * 2 / sqrt3);
+
+    // Hexagonal distance is computed based on the maximum distance in each possible direction:
+    //   wDist = w * 2 + 3;
+    //   hDist = h * 2 + 1;
+    //   whDist = wDist + hDist;
+    //   max(wDist, -wDist, hDist, -hDist, whDist, -whDist) <= radiusBound
+    const wMin = Math.ceil((-radiusBound - 3) / 2);
+    const wMax = Math.floor((radiusBound - 3) / 2);
+    for (let w = wMin; w <= wMax; w++) {
+        const wDist = w * 2 + 3;
+        const hMin = Math.ceil((-radiusBound - 1 - Math.min(0, wDist)) / 2);
+        const hMax = Math.floor((radiusBound - 1 - Math.max(0, wDist)) / 2);
+        for (let h = hMin; h <= hMax; h++) {
+            const hDist = h * 2 + 1;
+            const centerX = wholeX * wDist + halfX * hDist;
+            const centerY = wholeY * wDist + halfY * hDist;
+
+            // Check to ensure the axis-aligned square our hexagon is inscribed in is fully in frame. (Cheaper
+            // than computing an exact intersection and practically as good.)
+            if (Math.abs(centerX) + 1 <= scale && Math.abs(centerY) + 1 <= scale * aspectRatio) {
+                const polygon = document.createElementNS(svgNs, "polygon");
+                polygon.setAttribute("points",
+                       "" + (centerX + hexX1) + " " + (centerY + hexY1)
+                    + " " + (centerX + hexX2) + " " + (centerY + hexY2)
+                    + " " + (centerX + hexX3) + " " + (centerY + hexY3)
+                    + " " + (centerX - hexX1) + " " + (centerY - hexY1)
+                    + " " + (centerX - hexX2) + " " + (centerY - hexY2)
+                    + " " + (centerX - hexX3) + " " + (centerY - hexY3)
+                );
+                polygon.classList.add("hex");
+                polygon.dataset.w = w;
+                polygon.dataset.h = h;
+                polygon.addEventListener("mousedown", handleMousePress);
+                polygon.addEventListener("mouseenter", handleMousePress);
+                polygon.addEventListener("touchstart", handleTouchPress);
+                polygon.addEventListener("mouseup", handleMouseRelease);
+                polygon.addEventListener("mouseleave", handleMouseRelease);
+                polygon.addEventListener("touchend", handleTouchRelease);
+                svg.appendChild(polygon);
+
+                // Display our 0, 0 point (A440) specially.
+                if (w === 0 && h === 0) {
+                    polygon.classList.add("a440");
+                }
+
+                // Label the standard scale
+                if (labelMode !== "none") {
+                    const octave = Math.floor((w + h + 5) / 7) + 4;
+                    const note = Math.floor((((w + h) % 7) + 7) % 7);
+                    const expectedHalf = (octave - 4) * 2 - (2 <= note && note <= 4 ? 1 : 0);
+                    let accidental = null;
+                    if (expectedHalf === h) {
+                        accidental = "";
+                    } else if (labelMode === "accidentals" && expectedHalf === h + 1 && note !== 1 && note !== 4) {
+                        accidental = "♯";
+                    } else if (labelMode === "accidentals" && expectedHalf === h - 1 && note !== 2 && note !== 5) {
+                        accidental = "♭";
+                    }
+
+                    if (accidental !== null) {
+                        const text = document.createElementNS(svgNs, "text");
+                        text.setAttribute("x", centerX);
+                        text.setAttribute("y", centerY);
+                        text.setAttribute("dy", "0.5cap");
+                        text.appendChild(document.createTextNode(String.fromCharCode(note+65) + accidental + octave));
+                        if (accidental !== "") {
+                            text.classList.add("accidental");
+                        }
+                        svg.appendChild(text);
+                    }
+                }
+
+                // And set ourselves up to be lit up when playing notes
+                if (!visualElements.has(h)) {
+                    visualElements.set(h, new Map());
+                }
+                const visualRow = visualElements.get(h);
+                visualRow.set(w, polygon);
+
+                // It's possible that the keyboard is being updated while notes are being played.
+                if (nodes.has(h)) {
+                    const row = nodes.get(h);
+                    if (row.has(w)) {
+                        const note = row.get(w);
+                        if (note.active) {
+                            polygon.classList.add("active");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    const container = document.getElementById("keyboard");
+    container.replaceChildren(svg);
+}
+
+document.addEventListener("DOMContentLoaded", updateKeyboard);
+window.addEventListener("resize", updateKeyboard);
+
+
+///// Keep the tuning form state synced with itself and the values being played. /////
+
+function updateTunings() {
+    // We'll be called again in startNote;
+    if (audioContext === null) { return; }
+
+    const formData = new FormData(document.getElementById("tuningForm"));
+    switch (formData.get("tuning")) {
+    case "12-equal":
+        wMultiplier = Math.pow(2, 2/12);
+        hMultiplier = Math.pow(2, 1/12);
+        break;
+    case "17-equal":
+        wMultiplier = Math.pow(2, 3/17);
+        hMultiplier = Math.pow(2, 1/17);
+        break;
+    case "19-equal":
+        wMultiplier = Math.pow(2, 3/19);
+        hMultiplier = Math.pow(2, 2/19);
+        break;
+    case "22-equal":
+        wMultiplier = Math.pow(2, 4/22);
+        hMultiplier = Math.pow(2, 1/22);
+        break;
+    case "31-equal":
+        wMultiplier = Math.pow(2, 5/31);
+        hMultiplier = Math.pow(2, 3/31);
+        break;
+    case "53-equal":
+        wMultiplier = Math.pow(2, 9/53);
+        hMultiplier = Math.pow(2, 4/53);
+        break;
+    case "custom-equal":
+        const divisions = document.getElementById("equalDivisions").valueAsNumber;
+        const equalWhole = document.getElementById("equalWholeStep").valueAsNumber;
+        const equalHalf = document.getElementById("equalHalfStep").valueAsNumber;
+        if (equalWhole >= 1 && equalHalf >= 1) {
+            wMultiplier = Math.pow(2, equalWhole / divisions);
+            hMultiplier = Math.pow(2, equalHalf / divisions);
+        }
+        break;
+    case "just-fifth":
+        // The choice uniquely determined by
+        // - exact just octaves (frequency ratio 2) from 5 whole + 2 half
+        // - exact just fifths (frequency ratio 3/2) from 3 whole + 1 half
+        wMultiplier = 9/8;
+        hMultiplier = 256/243;
+        break;
+    case "minimax":
+        // The choice that minimizes the maximum error of
+        // - just fifths (frequency ratio 3/2) from 3 whole + 1 half
+        // - just major thirds (frequency ratio 5/4) from 2 whole
+        // Under the constraint that there are
+        // - exact just octaves (frequency ratio 2) from 5 whole + 2 half
+        // The maximum error is a fifth of syntonic comma.
+        wMultiplier = Math.pow(225/128, 1/5);
+        hMultiplier = 16/15;
+        break;
+    case "minimax3":
+        // The choice that minimizes the maximum error of
+        // - just fifths (frequency ratio 3/2) from 3 whole + 1 half
+        // - just major thirds (frequency ratio 5/4) from 2 whole
+        // - just octaves (frequency ratio 2)
+        // The maximum error is a seventh of a syntonic comma.
+        wMultiplier = Math.pow(1125/512, 1/7);
+        hMultiplier = 1.6 * Math.pow(8 / 135, 1/7);
+        break;
+    case "custom":
+        const customWMultiplier = document.getElementById("wholeStep").valueAsNumber;
+        const customHMultiplier = document.getElementById("halfStep").valueAsNumber;
+        if (customWMultiplier >= 1 && customHMultiplier >= 1) {
+            wMultiplier = customWMultiplier;
+            hMultiplier = customHMultiplier;
+        }
+        break;
+    }
+    
+    const customBasePitch = document.getElementById("basePitch").valueAsNumber;
+    if (customBasePitch >= 1) {
+        basePitch = customBasePitch;
+    }
+
+    for (const [h, row] of nodes) {
+        for (const [w, node] of row) {
+            node.oscillator.frequency.setValueAtTime(basePitch * Math.pow(wMultiplier, w) * Math.pow(hMultiplier, h), audioContext.currentTime);
+        }
+    }
+}
+
+function updateVoicings() {
+    // We need the context to generate a PeriodicWave, and we'll be called again in startNote.
+    if (audioContext === null) { return; }
+
+    const formData = new FormData(document.getElementById("voicingForm"));
+
+    const voicingName = formData.get("voicing");
+    switch (voicingName) {
+    case "sine":
+    case "square":
+    case "sawtooth":
+    case "triangle":
+        voicing = voicingName;
+        break;
+    // These Fourier series are roughly approximated by hand and don't sound very good. They could do with a lot of
+    // tweaking, even before accounting for things like noticeable attacks and variation in overtones with pitch.
+    case "piano":
+        voicing = new PeriodicWave(audioContext, { real: new Float32Array([0, 1, 0.1, 0.33, 0.6, 0.4]) });
+        break;
+    case "oboe":
+        voicing = new PeriodicWave(audioContext, { real: new Float32Array([0, 1, 0.95, 2.1, 0.17, 0.19, 0.22, 0.55, 0.3, 0.2]) });
+        break;
+    case "clarinet":
+        voicing = new PeriodicWave(audioContext, { real: new Float32Array([0, 1, 0.36, 0.26, 0.01, 0.08, 0.2, 0.03]) });
+        break;
+    case "horn":
+        voicing = new PeriodicWave(audioContext, { real: new Float32Array([0, 1, 0.39, 0.23, 0.21, 0.75, 0.57, 0.7, 0.53, 0.5, 0.28, 0.1, 0.06, 0.07]) });
+        break;
+    }
+
+    for (const [h, row] of nodes) {
+        for (const [w, node] of row) {
+            if (voicing instanceof PeriodicWave) {
+                node.oscillator.setPeriodicWave(periodicWave);
+            } else {
+                node.oscillator.type = voicing;
+            }
+        }
+    }
+}
+
+// The custom equal division assumes that 5 whole + 2 half makes up an exact just octave. Therefore, when editing
+// the sizes of whole or half steps, update the other to make this true.
+function updateEqualHalf() {
+    const divisions = document.getElementById("equalDivisions").valueAsNumber;
+    const whole = document.getElementById("equalWholeStep").valueAsNumber;
+    document.getElementById("equalHalfStep").value = (divisions - whole * 5) / 2;
+}
+
+function updateEqualWhole() {
+    const divisions = document.getElementById("equalDivisions").valueAsNumber;
+    const half = document.getElementById("equalHalfStep").valueAsNumber;
+    document.getElementById("equalWholeStep").value = (divisions - half * 2) / 5;
+}
+
+function updateRatioToCents(ratioInput, centsId) {
+    const centsInput = document.getElementById(centsId);
+    centsInput.value = 1200 * Math.log2(ratioInput.valueAsNumber);
+}
+
+function updateCentsToRatio(centsInput, ratioId) {
+    const ratioInput = document.getElementById(ratioId);
+    ratioInput.value = Math.pow(2, centsInput.valueAsNumber / 1200);
+}
+</script>
+<style>
+#keyboard text {
+    fill: currentcolor;
+    text-anchor: middle;
+    font-size: 0.5px;
+    pointer-events: none;
+}
+#keyboard text.accidental {
+    fill: #BCBCBC55;
+}
+#keyboard polygon.hex {
+    stroke: #BCBCBC99;
+    fill: #BCBCBC22;
+    stroke-width: 0.1;
+}
+#keyboard polygon.hex.active {
+    stroke: currentcolor;
+}
+#keyboard polygon.hex.a440 {
+    fill: #BCBCBC44;
+}
+
+form {
+    margin: 2em;
+}
+fieldset {
+    padding: 0.5em;
+}
+label.flex {
+    display: flex;
+    align-items: center;
+}
+#equalDivisions, #equalWholeStep, #equalHalfStep {
+    width: 3em;
+}
+#basePitch {
+    width: 4em;
+}
+#wholeStepCents, #halfStepCents {
+    width: 6em;
+}
+</style>
+</head>
+<body>
+<p>Press keys to play! If a key gets stuck, hit it again or hit <button type="button" onclick="endAll();">Escape</button> to end all notes. Hold Shift to soften notes and Space to sustain.
+
+<div id="keyboard"></div>
+<form id="keyboardForm">
+<label class="flex">Key Size: <input id="keysize" type="range" min="-6" max="-1.5" step="any" value="-3.6" oninput="updateKeyboard();"></label>
+Show:
+<label><input type="radio" name="labelMode" value="none" oninput="updateKeyboard();">No labels</label>
+<label><input type="radio" name="labelMode" value="naturals" oninput="updateKeyboard();">Naturals</label>
+<label><input type="radio" name="labelMode" value="accidentals" oninput="updateKeyboard();" checked>Naturals and Accidentals</label>
+</form>
+
+<form id="voicingForm">
+Voicing:
+<fieldset>
+<label><input type="radio" name="voicing" value="sine" oninput="updateVoicings();" checked>Sine Wave</label>
+<label><input type="radio" name="voicing" value="square" oninput="updateVoicings();">Square Wave</label>
+<label><input type="radio" name="voicing" value="sawtooth" oninput="updateVoicings();">Sawtooth Wave</label>
+<label><input type="radio" name="voicing" value="triangle" oninput="updateVoicings();">Triangle Wave</label>
+</fieldset>
+<fieldset>
+<label><input type="radio" name="voicing" value="piano" oninput="updateVoicings();">Piano</label>
+<label><input type="radio" name="voicing" value="oboe" oninput="updateVoicings();">Oboe</label>
+<label><input type="radio" name="voicing" value="clarinet" oninput="updateVoicings();">Clarinet</label>
+<label><input type="radio" name="voicing" value="horn" oninput="updateVoicings();">Horn</label>
+</fieldset>
+</form>
+
+<form id="tuningForm">
+Tuning:
+<fieldset>
+<label><input type="radio" name="tuning" value="12-equal" oninput="updateTunings();" checked>12-tone equal</label>
+<label><input type="radio" name="tuning" value="17-equal" oninput="updateTunings();">17-tone equal</label>
+<label><input type="radio" name="tuning" value="19-equal" oninput="updateTunings();">19-tone equal</label>
+<label><input type="radio" name="tuning" value="22-equal" oninput="updateTunings();">22-tone equal</label>
+<label><input type="radio" name="tuning" value="31-equal" oninput="updateTunings();">31-tone equal</label>
+<label><input type="radio" name="tuning" value="53-equal" oninput="updateTunings();">53-tone equal</label>
+</fieldset>
+<fieldset>
+<label><input type="radio" name="tuning" value="custom-equal" oninput="updateTunings();">Custom Equal —
+<label>Divisions: <input type="number" id="equalDivisions" min="1" step="1" value="12" oninput="updateEqualWhole(); updateTunings();"></label>
+<label>Whole step: <input type="number" id="equalWholeStep" min="1" step="1" value="2" oninput="updateEqualHalf(); updateTunings();"></label>
+<label>Half step: <input type="number" id="equalHalfStep" min="1" step="1" value="1" oninput="updateEqualWhole(); updateTunings();"></label>
+</label>
+</fieldset>
+<fieldset>
+<label><input type="radio" name="tuning" value="just-fifth" oninput="updateTunings();">Just Octave/Fifth</label>
+<label><input type="radio" name="tuning" value="minimax" oninput="updateTunings();">Minimax Fifth/Third, Just Octave</label>
+<label><input type="radio" name="tuning" value="minimax3" oninput="updateTunings();">Minimax Octave/Fifth/Third</label>
+</fieldset>
+<fieldset>
+<label><input type="radio" name="tuning" value="custom" oninput="updateTunings();">Custom —
+<label>Whole step: <input type="number" id="wholeStep" min="1" max="2" step="any" value="1.122462048309373" oninput="updateRatioToCents(this, 'wholeStepCents'); updateTunings();"></label>
+<label>(= <input type="number" id="wholeStepCents" min="0" max="1200" step="any" value="200" oninput="updateCentsToRatio(this, 'wholeStep'); updateTunings();"> cents)</label>
+<label>Half step: <input type="number" id="halfStep" min="1" max="2" step="any" value="1.0594630943592953" oninput="updateRatioToCents(this, 'halfStepCents'); updateTunings();"></label>
+<label>(= <input type="number" id="halfStepCents" min="0" max="1200" step="any" value="100" oninput="updateCentsToRatio(this, 'halfStep'); updateTunings();"> cents)</label>
+</label>
+</fieldset>
+<label>Pitch standard: <input type="number" id="basePitch" step="any" value="440" oninput="updateTunings();"></label>
+</form>
+</body>
