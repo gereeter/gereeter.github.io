@@ -10,12 +10,20 @@ const notes = new Map();
 const visualElements = new Map();
 
 // Tuning: we support any regular diatonic tuning system
-let basePitch = 440;
-let tuning = { wRatio: Math.pow(2, 2/12), hRatio: Math.pow(2, 1/12) };
+let tuning = { // we support any regular diatonic tuning system
+    basePitch: 440,
+    wRatio: Math.pow(2, 2/12),
+    hRatio: Math.pow(2, 1/12),
+};
 // Voicing
 let voicing = "sine";
 let voicingGains = new Float32Array([1]);
 let voicingActiveDecay = Number.POSITIVE_INFINITY;
+
+let effects = {
+    randomVolumeAmount: 0,
+};
+
 
 // Pedals
 let sustain = false;
@@ -75,6 +83,7 @@ function startNote(w, h, soft) {
     // Make sure our globals are up to date
     updateTunings();
     updateVoicings();
+    updateEffects();
 
     // Finally, build the sound!
     const sound = {
@@ -84,10 +93,14 @@ function startNote(w, h, soft) {
         oscillators: [],
         gains: [],
     };
+    if (effects.randomVolumeAmount > 0) {
+        // Modulate by a triangular distribution in log space
+        sound.volume *= Math.exp((Math.random() - Math.random()) * effects.randomVolumeAmount);
+    }
     for (let i = 0; i < voicingGains.length; i++) {
         const harmonic = i + 1;
 
-        const oscillatorSettings = { frequency: basePitch * Math.pow(tuning.wRatio, w) * Math.pow(tuning.hRatio, h) * harmonic };
+        const oscillatorSettings = { frequency: tuning.basePitch * Math.pow(tuning.wRatio, w) * Math.pow(tuning.hRatio, h) * harmonic };
         if (voicing instanceof PeriodicWave) {
             oscillatorSettings.periodicWave = voicing;
         } else {
@@ -525,13 +538,13 @@ function updateTunings() {
     
     const customBasePitch = document.getElementById("basePitch").valueAsNumber;
     if (customBasePitch >= 1) {
-        basePitch = customBasePitch;
+        tuning.basePitch = customBasePitch;
     }
 
     const currentTime = audioContext.currentTime;
     for (const [h, row] of notes) {
         for (const [w, note] of row) {
-            const rootFrequency = basePitch * Math.pow(tuning.wRatio, w) * Math.pow(tuning.hRatio, h);
+            const rootFrequency = tuning.basePitch * Math.pow(tuning.wRatio, w) * Math.pow(tuning.hRatio, h);
             for (const sound of note.active) {
                 for (let i = 0; i < sound.oscillators.length; i++) {
                     const harmonic = i + 1;
@@ -646,6 +659,15 @@ function updateVoicings() {
                 }
             }
         }
+    }
+}
+
+function updateEffects() {
+    const doRandomizeVolume = document.getElementById("randomVolume").checked;
+    if (doRandomizeVolume) {
+        effects.randomVolumeAmount = document.getElementById("randomVolumeAmount").valueAsNumber;
+    } else {
+        effects.randomVolumeAmount = 0;
     }
 }
 
@@ -795,5 +817,12 @@ Tuning:
 </label>
 </fieldset>
 <label>Pitch standard: <input type="number" id="basePitch" step="any" value="440" oninput="updateTunings();"></label>
+</form>
+
+<form>
+Effects:
+<fieldset>
+<label><input type="checkbox" id="randomVolume" checked>Randomize Volume <label class="flex">(Amount: <input type="range" id="randomVolumeAmount" min="0" max="0.7" step="any" value="0.1" oninput="updateEffects();">)</label></label>
+</fieldset>
 </form>
 </body>
