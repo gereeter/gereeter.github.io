@@ -424,7 +424,7 @@ function updateKeyboard() {
                     const row = notes.get(h);
                     if (row.has(w)) {
                         const note = row.get(w);
-                        if (note.active) {
+                        if (note.held) {
                             polygon.classList.add("active");
                         }
                     }
@@ -746,7 +746,7 @@ Voicing:
 <fieldset>
 <label><input type="radio" name="voicing" value="custom-string" oninput="updateVoicings();" checked>Plucked Strings —
 <label class="flex">Pluck Location: <input id="stringLocation" type="range" min="0" max="1" step="any" value="0.77" oninput="updateVoicings();"></label>
-<label class="flex">Decay Time: <input id="stringDecay" type="range" min="0" max="1" step="any" value="0.75" oninput="updateVoicings();"></label>
+<label class="flex">Decay Time: <input id="stringDecay" type="range" min="0.01" max="1" step="any" value="0.75" oninput="updateVoicings();"></label>
 </label>
 </fieldset>
 </form>
