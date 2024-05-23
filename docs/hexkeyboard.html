@@ -137,14 +137,15 @@ function endNote(w, h) {
 
     const time = audioContext.currentTime;
     for (const sound of note.active) {
+        sound.endTime = time + 0.25;
         for (const gain of sound.gains) {
             const current = gain.gain.value;
             gain.gain.cancelScheduledValues(time);
             gain.gain.setValueAtTime(current, time);
-            gain.gain.linearRampToValueAtTime(0, time + 0.25);
+            gain.gain.linearRampToValueAtTime(0, sound.endTime);
         }
         for (const oscillator of sound.oscillators) {
-            oscillator.stop(time + 0.25);
+            oscillator.stop(sound.endTime);
         }
         note.inactive.push(sound);
     }
