@@ -6,7 +6,7 @@
 <script>
 // UI state
 let audioContext = null;
-const nodes = new Map();
+const notes = new Map();
 const visualElements = new Map();
 
 // Tuning: we support any regular diatonic tuning system
@@ -14,6 +14,8 @@ let basePitch = 440;
 let tuning = { wRatio: Math.pow(2, 2/12), hRatio: Math.pow(2, 1/12) };
 // Voicing
 let voicing = "sine";
+let voicingGains = new Float32Array([1]);
+let voicingActiveDecay = Number.POSITIVE_INFINITY;
 
 // Pedals
 let sustain = false;
@@ -22,42 +24,46 @@ let sustain = false;
 ///// Core audio functionality /////
 
 function startNote(w, h, soft) {
+    // Lazily initialize the audio context; we don't need it until we start playing audio, and autoplay protection will
+    // cause warnings otherwise.
     if (audioContext === null) {
         audioContext = new AudioContext();
     }
 
-    if (!nodes.has(h)) {
-        nodes.set(h, new Map());
+    // Create the note if it doesn't exist
+    if (!notes.has(h)) {
+        notes.set(h, new Map());
     }
-    const row = nodes.get(h);
+    const row = notes.get(h);
     if (!row.has(w)) {
-        updateTunings();
-        updateVoicings();
-
-        const oscillatorSettings = { frequency: basePitch * Math.pow(tuning.wRatio, w) * Math.pow(tuning.hRatio, h) };
-        if (voicing instanceof PeriodicWave) {
-            oscillatorSettings.periodicWave = voicing;
-        } else {
-            oscillatorSettings.type = voicing;
-        }
-        let oscillator = new OscillatorNode(audioContext, oscillatorSettings);
-        oscillator.start();
-
-        const gain = new GainNode(audioContext, {
-            gain: 0,
-        });
-        oscillator.connect(gain);
-        gain.connect(audioContext.destination);
-
-        row.set(w, { oscillator: oscillator, gain: gain, active: false });
+        row.set(w, { active: [], inactive: [], held: false });
     }
     const note = row.get(w);
 
-    if (note.active) {
+    // Cleanup complete sounds
+    const time = audioContext.currentTime;
+    note.inactive = note.inactive.filter(function(sound) {
+        if (sound.endTime <= time) {
+            for (const gain of sound.gains) {
+                gain.disconnect();
+            }
+            for (const oscillator of sound.oscillators) {
+                oscillator.disconnect();
+            }
+            return false;
+        } else {
+            return true;
+        }
+    });
+
+    if (note.held) {
         // This is hopefully caught by filtering on event.repeat, but that's not reliable.
         return;
+    } else {
+        note.held = true;
     }
-    note.active = true;
+
+    // Light up the key visually
     if (visualElements.has(h)) {
         const visualRow = visualElements.get(h);
         if (visualRow.has(w)) {
@@ -65,26 +71,58 @@ function startNote(w, h, soft) {
             visual.classList.add("active");
         }
     }
-    
-    const gainNode = note.gain;
-    const current = gainNode.gain.value;
-    const time = audioContext.currentTime;
-    gainNode.gain.cancelScheduledValues(time);
-    gainNode.gain.setValueAtTime(current, time);
-    const targetGain = soft ? 0.06 : 0.2;
-    if (current < 0.2 * targetGain) {
-        gainNode.gain.linearRampToValueAtTime(0.2 * targetGain, time + 0.05);
+
+    // Make sure our globals are up to date
+    updateTunings();
+    updateVoicings();
+
+    // Finally, build the sound!
+    const sound = {
+        startTime: time,
+        endTime: 0,
+        volume: soft ? 0.06 : 0.2,
+        oscillators: [],
+        gains: [],
+    };
+    for (let i = 0; i < voicingGains.length; i++) {
+        const harmonic = i + 1;
+
+        const oscillatorSettings = { frequency: basePitch * Math.pow(tuning.wRatio, w) * Math.pow(tuning.hRatio, h) * harmonic };
+        if (voicing instanceof PeriodicWave) {
+            oscillatorSettings.periodicWave = voicing;
+        } else {
+            oscillatorSettings.type = voicing;
+        }
+        const oscillator = new OscillatorNode(audioContext, oscillatorSettings);
+
+        // TODO: ramp?
+        /*if (current < 0.2 * volume) {
+            gainNode.gain.linearRampToValueAtTime(0.2 * volume, time + 0.05);
+        }
+        gainNode.gain.linearRampToValueAtTime(current + volume, time + 0.1);
+        gainNode.gain.linearRampToValueAtTime(Math.max(current, volume), time + 0.15);*/
+        const gain = new GainNode(audioContext, { gain: 0 });
+        gain.gain.setValueAtTime(sound.volume * voicingGains[i], sound.startTime);
+        if (Number.isFinite(voicingActiveDecay)) {
+            gain.gain.setTargetAtTime(0, sound.startTime, voicingActiveDecay / harmonic);
+        }
+
+        sound.oscillators.push(oscillator);
+        sound.gains.push(gain);
+
+        oscillator.connect(gain);
+        gain.connect(audioContext.destination);
+        oscillator.start(sound.startTime);
     }
-    gainNode.gain.linearRampToValueAtTime(current + targetGain, time + 0.1);
-    gainNode.gain.linearRampToValueAtTime(Math.max(current, targetGain), time + 0.15);
+    note.active.push(sound);
 }
 
 function endNote(w, h) {
-    if (!nodes.has(h)) { return; }
-    const row = nodes.get(h);
+    if (!notes.has(h)) { return; }
+    const row = notes.get(h);
     if (!row.has(w)) { return; }
     const note = row.get(w);
-    note.active = false;
+    note.held = false;
     if (visualElements.has(h)) {
         const visualRow = visualElements.get(h);
         if (visualRow.has(w)) {
@@ -97,17 +135,20 @@ function endNote(w, h) {
         return;
     }
 
-    const gainNode = note.gain;
-    const current = gainNode.gain.value;
     const time = audioContext.currentTime;
-    gainNode.gain.cancelScheduledValues(time);
-    gainNode.gain.setValueAtTime(current, time);
-    if (current > 0.2) {
-        gainNode.gain.linearRampToValueAtTime(0.2, time + 0.1);
+    for (const sound of note.active) {
+        for (const gain of sound.gains) {
+            const current = gain.gain.value;
+            gain.gain.cancelScheduledValues(time);
+            gain.gain.setValueAtTime(current, time);
+            gain.gain.linearRampToValueAtTime(0, time + 0.25);
+        }
+        for (const oscillator of sound.oscillators) {
+            oscillator.stop(time + 0.25);
+        }
+        note.inactive.push(sound);
     }
-    if (current > 0) {
-        gainNode.gain.linearRampToValueAtTime(0, time + 0.25);
-    }
+    note.active = [];
 }
 
 function startSustain() {
@@ -117,9 +158,9 @@ function startSustain() {
 function endSustain() {
     if (sustain) {
         sustain = false;
-        for (const [h, row] of nodes) {
+        for (const [h, row] of notes) {
             for (const [w, note] of row) {
-                if (!note.active) {
+                if (!note.held) {
                     endNote(w, h);
                 }
             }
@@ -128,13 +169,22 @@ function endSustain() {
 }
 
 function endAll() {
-    sustained = null;
-    for (const row of nodes.values()) {
+    sustain = false;
+    for (const row of notes.values()) {
         for (const note of row.values()) {
-            note.gain.gain.setValueAtTime(0, audioContext.currentTime);
+            for (const sound of note.active.concat(note.inactive)) {
+                for (const gain of sound.gains) {
+                    gain.gain.setValueAtTime(0, 0);
+                    gain.disconnect();
+                }
+                for (const oscillator of sound.oscillators) {
+                    oscillator.stop();
+                    oscillator.disconnect();
+                }
+            }
         }
     }
-    nodes.clear();
+    notes.clear();
     for (const visualRow of visualElements.values()) {
         for (const visual of visualRow.values()) {
             visual.classList.remove("active");
@@ -369,8 +419,8 @@ function updateKeyboard() {
                 visualRow.set(w, polygon);
 
                 // It's possible that the keyboard is being updated while notes are being played.
-                if (nodes.has(h)) {
-                    const row = nodes.get(h);
+                if (notes.has(h)) {
+                    const row = notes.get(h);
                     if (row.has(w)) {
                         const note = row.get(w);
                         if (note.active) {
@@ -441,6 +491,7 @@ const tuningMapping = new Map([
     // - just octaves (frequency ratio 2)
     // The maximum error is a seventh of a syntonic comma.
     ["minimax3", { wRatio: Math.pow(1125/512, 1/7), hRatio: 1.6 * Math.pow(8 / 135, 1/7) }],
+    ["squished", { wRatio: 0.5 * Math.sqrt(5), hRatio: 0.48 * Math.sqrt(5) }],
 ]);
 
 function updateTunings() {
@@ -476,9 +527,16 @@ function updateTunings() {
         basePitch = customBasePitch;
     }
 
-    for (const [h, row] of nodes) {
-        for (const [w, node] of row) {
-            node.oscillator.frequency.setValueAtTime(basePitch * Math.pow(tuning.wRatio, w) * Math.pow(tuning.hRatio, h), audioContext.currentTime);
+    const currentTime = audioContext.currentTime;
+    for (const [h, row] of notes) {
+        for (const [w, note] of row) {
+            const rootFrequency = basePitch * Math.pow(tuning.wRatio, w) * Math.pow(tuning.hRatio, h);
+            for (const sound of note.active) {
+                for (let i = 0; i < sound.oscillators.length; i++) {
+                    const harmonic = i + 1;
+                    sound.oscillators[i].frequency.setValueAtTime(rootFrequency * harmonic, currentTime);
+                }
+            }
         }
     }
 }
@@ -496,29 +554,95 @@ function updateVoicings() {
     case "sawtooth":
     case "triangle":
         voicing = voicingName;
+        voicingGains = new Float32Array([1]);
+        voicingActiveDecay = Number.POSITIVE_INFINITY;
         break;
     // These Fourier series are roughly approximated by hand and don't sound very good. They could do with a lot of
     // tweaking, even before accounting for things like noticeable attacks and variation in overtones with pitch.
     case "piano":
         voicing = new PeriodicWave(audioContext, { real: new Float32Array([0, 1, 0.1, 0.33, 0.6, 0.4]) });
+        voicingGains = new Float32Array([1]);
+        voicingActiveDecay = Number.POSITIVE_INFINITY;
         break;
     case "oboe":
         voicing = new PeriodicWave(audioContext, { real: new Float32Array([0, 1, 0.95, 2.1, 0.17, 0.19, 0.22, 0.55, 0.3, 0.2]) });
+        voicingGains = new Float32Array([1]);
+        voicingActiveDecay = Number.POSITIVE_INFINITY;
         break;
     case "clarinet":
         voicing = new PeriodicWave(audioContext, { real: new Float32Array([0, 1, 0.36, 0.26, 0.01, 0.08, 0.2, 0.03]) });
+        voicingGains = new Float32Array([1]);
+        voicingActiveDecay = Number.POSITIVE_INFINITY;
         break;
     case "horn":
         voicing = new PeriodicWave(audioContext, { real: new Float32Array([0, 1, 0.39, 0.23, 0.21, 0.75, 0.57, 0.7, 0.53, 0.5, 0.28, 0.1, 0.06, 0.07]) });
+        voicingGains = new Float32Array([1]);
+        voicingActiveDecay = Number.POSITIVE_INFINITY;
+        break;
+    case "custom-string":
+        const location = document.getElementById("stringLocation").valueAsNumber;
+        const decay = document.getElementById("stringDecay").valueAsNumber;
+
+        // TODO: make this configurable?
+        const fourierCount = 20;
+        voicing = "sine";
+        voicingGains = new Float32Array(fourierCount);
+        voicingActiveDecay = -Math.log2(1 - decay);
+
+        // Compute the Fourier series of an asymmetric triangle wave. Since the vibrational modes of a string are
+        // physically sine waves, the amount of vibration in each mode corresponds exactly to the Fourier decomposition
+        // of the physical shape of the string. In a plucking configuration, this is a triangle.
+        const locationMin = Math.min(location, 1 - location);
+        for (let i = 0; i < fourierCount; i++) {
+            let harmonic = i + 1;
+            if (locationMin < 0.01) {
+                // Divide everything by locationMin * Math.PI symbolically to avoid dividing by near zero
+                // sin(l * h * pi) / h^2 = sinc(l * h * pi) * l * pi / h
+                // sinc(l * h * pi) / h
+                // ~= 1 / h - (l^2 * h * pi^2) / 6
+                // Note: above is the mathematical unnormalized sinc, not the signal processing normalized sinc
+                voicingGains[i] = 1 / harmonic - harmonic * ((locationMin * locationMin) * (Math.PI * Math.PI / 6));
+            } else {
+                voicingGains[i] = Math.sin(locationMin * harmonic * Math.PI) / (harmonic * harmonic);
+            }
+        }
+
+        // Normalize the coefficients. We could compute the analytical solution, but this is fast and accounts for
+        // the error of not using the full Fourier series.
+        let totalCoeff = 0;
+        for (let i = 0; i < fourierCount; i++) {
+            totalCoeff += Math.abs(voicingGains[i]);
+        }
+        const normalize = 1 / totalCoeff;
+        for (let i = 0; i < fourierCount; i++) {
+            voicingGains[i] *= normalize;
+        }
+
         break;
     }
 
-    for (const [h, row] of nodes) {
-        for (const [w, node] of row) {
-            if (voicing instanceof PeriodicWave) {
-                node.oscillator.setPeriodicWave(voicing);
-            } else {
-                node.oscillator.type = voicing;
+    const currentTime = audioContext.currentTime;
+    for (const [h, row] of notes) {
+        for (const [w, note] of row) {
+            for (const sound of note.active) {
+                for (let i = voicingGains.length; i < sound.gains.length; i++) {
+                    sound.gains[i].gain.setValueAtTime(0, currentTime);
+                }
+                for (let i = 0; i < Math.min(voicingGains.length, sound.oscillators.length); i++) {
+                    const harmonic = i + 1;
+                    if (voicing instanceof PeriodicWave) {
+                        sound.oscillators[i].setPeriodicWave(voicing);
+                    } else if (sound.oscillators[i].type !== voicing) {
+                        sound.oscillators[i].type = voicing;
+                    }
+                    sound.gains[i].gain.cancelScheduledValues(currentTime);
+                    if (Number.isFinite(voicingActiveDecay)) {
+                        sound.gains[i].gain.setValueAtTime(sound.volume * voicingGains[i] * Math.exp(harmonic * (sound.startTime - currentTime) / voicingActiveDecay), currentTime);
+                        sound.gains[i].gain.setTargetAtTime(0, currentTime, voicingActiveDecay / harmonic);
+                    } else {
+                        sound.gains[i].gain.setValueAtTime(sound.volume * voicingGains[i], currentTime);
+                    }
+                }
             }
         }
     }
@@ -578,7 +702,7 @@ fieldset {
     padding: 0.5em;
 }
 label.flex {
-    display: flex;
+    display: inline-flex;
     align-items: center;
 }
 #equalDivisions, #equalWholeStep, #equalHalfStep {
@@ -597,7 +721,7 @@ label.flex {
 
 <div id="keyboard"></div>
 <form id="keyboardForm">
-<label class="flex">Key Size: <input id="keysize" type="range" min="-6" max="-1.5" step="any" value="-3.6" oninput="updateKeyboard();"></label>
+<div><label class="flex">Key Size: <input id="keysize" type="range" min="-6" max="-1.5" step="any" value="-3.6" oninput="updateKeyboard();"></label></div>
 Show:
 <label><input type="radio" name="labelMode" value="none" oninput="updateKeyboard();">No labels</label>
 <label><input type="radio" name="labelMode" value="naturals" oninput="updateKeyboard();">Naturals</label>
@@ -607,7 +731,7 @@ Show:
 <form id="voicingForm">
 Voicing:
 <fieldset>
-<label><input type="radio" name="voicing" value="sine" oninput="updateVoicings();" checked>Sine Wave</label>
+<label><input type="radio" name="voicing" value="sine" oninput="updateVoicings();">Sine Wave</label>
 <label><input type="radio" name="voicing" value="square" oninput="updateVoicings();">Square Wave</label>
 <label><input type="radio" name="voicing" value="sawtooth" oninput="updateVoicings();">Sawtooth Wave</label>
 <label><input type="radio" name="voicing" value="triangle" oninput="updateVoicings();">Triangle Wave</label>
@@ -617,6 +741,12 @@ Voicing:
 <label><input type="radio" name="voicing" value="oboe" oninput="updateVoicings();">Oboe</label>
 <label><input type="radio" name="voicing" value="clarinet" oninput="updateVoicings();">Clarinet</label>
 <label><input type="radio" name="voicing" value="horn" oninput="updateVoicings();">Horn</label>
+</fieldset>
+<fieldset>
+<label><input type="radio" name="voicing" value="custom-string" oninput="updateVoicings();" checked>Plucked Strings —
+<label class="flex">Pluck Location: <input id="stringLocation" type="range" min="0" max="1" step="any" value="0.77" oninput="updateVoicings();"></label>
+<label class="flex">Decay Time: <input id="stringDecay" type="range" min="0" max="1" step="any" value="0.75" oninput="updateVoicings();"></label>
+</label>
 </fieldset>
 </form>
 
@@ -645,6 +775,7 @@ Tuning:
 <fieldset>
 <label><input type="radio" name="tuning" value="minimax" oninput="updateTunings();">Minimax Fifth/Third, Just Octave</label>
 <label><input type="radio" name="tuning" value="minimax3" oninput="updateTunings();">Minimax Octave/Fifth/Third</label>
+<label><input type="radio" name="tuning" value="squished" oninput="updateTunings();">Just Fifth/Third</label>
 </fieldset>
 <fieldset>
 <label><input type="radio" name="tuning" value="12-zeta" oninput="updateTunings();">Zeta 12-tone equal</label>
