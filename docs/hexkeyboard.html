@@ -25,7 +25,7 @@ let effects = {
 
 // Pedals
 let sustain = false;
-
+let soften = false;
 
 ///// Core audio functionality /////
 
@@ -270,7 +270,7 @@ window.addEventListener("keydown", function(event) {
     } else if (keyMapping.has(event.code)) {
         const position = keyMapping.get(event.code);
         if (!event.repeat) {
-            startNote(position.w, position.h, event.shiftKey);
+            startNote(position.w, position.h, event.shiftKey || soften);
         }
     } else {
         return;
@@ -290,31 +290,6 @@ window.addEventListener("keyup", function(event) {
 
 
 ///// Spatial/Visual Interface /////
-
-function handleMousePress(event) {
-    if (event.buttons === 1) {
-        startNote(+event.target.dataset.w, +event.target.dataset.h, event.shiftKey);
-    }
-}
-
-function handleMouseRelease(event) {
-    endNote(+event.target.dataset.w, +event.target.dataset.h);
-}
-
-function handleMouseLeave(event) {
-    if ((event.buttons & 1) !== 0) {
-        handleMouseRelease(event);
-    }
-}
-
-function handleTouchPress(event) {
-    event.preventDefault();
-    startNote(+event.target.dataset.w, +event.target.dataset.h, event.shiftKey);
-}
-
-function handleTouchRelease(event) {
-    endNote(+event.target.dataset.w, +event.target.dataset.h);
-}
 
 // Unfortunately, there isn't an equivalent of mouseenter/mouseleave for touch events. Therefore, simulate it
 // by tracking touches across the whole window and keeping track of where they currently are.
@@ -349,6 +324,83 @@ window.addEventListener("touchmove", function(event) {
             current.dispatchEvent(new Event("_touchenter"));
         }
     }
+}, { passive: true });
+
+// Key presses
+function handleMousePress(event) {
+    if (event.buttons === 1) {
+        startNote(+event.target.dataset.w, +event.target.dataset.h, event.shiftKey || soften);
+    }
+}
+
+function handleMouseRelease(event) {
+    endNote(+event.target.dataset.w, +event.target.dataset.h);
+}
+
+function handleMouseLeave(event) {
+    if ((event.buttons & 1) !== 0) {
+        handleMouseRelease(event);
+    }
+}
+
+function handleTouchPress(event) {
+    event.preventDefault();
+    startNote(+event.target.dataset.w, +event.target.dataset.h, event.shiftKey || soften);
+}
+
+function handleTouchRelease(event) {
+    endNote(+event.target.dataset.w, +event.target.dataset.h);
+}
+
+// Pedals
+function handleSustainMousePress(event) {
+    if (event.buttons === 1) {
+        startSustain();
+    }
+}
+function handleSustainMouseLeave(event) {
+    if ((event.buttons & 1) !== 0) {
+        endSustain();
+    }
+}
+function handleSoftenPress() {
+    soften = true;
+}
+function handleSoftenRelease() {
+    soften = false;
+}
+function handleSoftenMousePress(event) {
+    if (event.buttons === 1) {
+        handleSoftenPress();
+    }
+}
+function handleSoftenMouseLeave(event) {
+    if ((event.buttons & 1) !== 0) {
+        handleSoftenRelease();
+    }
+}
+document.addEventListener("DOMContentLoaded", function() {
+    // This is likely overkill on the triggers for ending sustain, but better safe than sorry in regards to the button
+    // getting stuck.
+    const sustainButton = document.getElementById("sustainPedal");
+    sustainButton.addEventListener("click", endSustain, { passive: true });
+    sustainButton.addEventListener("mouseup", endSustain, { passive: true });
+    sustainButton.addEventListener("mouseleave", handleSustainMouseLeave, { passive: true });
+    sustainButton.addEventListener("touchcancel", endSustain, { passive: true });
+    sustainButton.addEventListener("touchend", endSustain, { passive: true });
+    sustainButton.addEventListener("_touchleaveend", endSustain, { passive: true });
+    sustainButton.addEventListener("mousedown", handleSustainMousePress, { passive: true });
+    sustainButton.addEventListener("touchstart", startSustain, { passive: true });
+
+    const softButton = document.getElementById("softPedal");
+    softButton.addEventListener("click", handleSoftenRelease, { passive: true });
+    softButton.addEventListener("mouseup", handleSoftenRelease, { passive: true });
+    softButton.addEventListener("mouseleave", handleSoftenMouseLeave, { passive: true });
+    softButton.addEventListener("touchcancel", handleSoftenRelease, { passive: true });
+    softButton.addEventListener("touchend", handleSoftenRelease, { passive: true });
+    softButton.addEventListener("_touchleaveend", handleSoftenRelease, { passive: true });
+    softButton.addEventListener("mousedown", handleSoftenMousePress, { passive: true });
+    softButton.addEventListener("touchstart", handleSoftenPress, { passive: true });
 }, { passive: true });
 
 function updateKeyboard() {
@@ -484,8 +536,8 @@ function updateKeyboard() {
     container.replaceChildren(svg);
 }
 
-document.addEventListener("DOMContentLoaded", updateKeyboard);
-window.addEventListener("resize", updateKeyboard);
+document.addEventListener("DOMContentLoaded", updateKeyboard, { passive: true });
+window.addEventListener("resize", updateKeyboard, { passive: true });
 
 
 ///// Keep the tuning form state synced with itself and the values being played. /////
@@ -821,7 +873,7 @@ label.flex {
 </style>
 </head>
 <body>
-<p>Press keys to play! If a key gets stuck, hit it again or hit <button type="button" onclick="endAll();">Escape</button> to end all notes. Hold Shift to soften notes and Space to sustain.
+<p>Press keys to play! If a key gets stuck, hit it again or hit <button type="button" onclick="endAll();">Escape</button> to end all notes. Hold <button type="button" id="softPedal">Shift</button> to soften notes and <button type="button" id="sustainPedal">Space</button> to sustain.
 
 <div id="keyboard"></div>
 <form id="keyboardForm">
