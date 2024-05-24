@@ -477,6 +477,7 @@ const tuningMapping = new Map([
     ["19-equal", tuningEDO(19, 3, 2)],
     ["22-equal", tuningEDO(22, 4, 1)],
     ["31-equal", tuningEDO(31, 5, 3)],
+    ["43-equal", tuningEDO(43, 7, 4)],
     ["53-equal", tuningEDO(53, 9, 4)],
     // Tunings based on peaks of the Riemann zeta function
     // Values taken from https://en.xen.wiki/w/The_Riemann_zeta_function_and_tuning#Zeta_edo_lists
@@ -725,6 +726,9 @@ fieldset {
 form {
     line-height: 1.5lh;
 }
+label {
+    display: inline-block;
+}
 label.flex {
     display: inline-flex;
     align-items: center;
@@ -737,6 +741,46 @@ label.flex {
 }
 #wholeStepCents, #halfStepCents {
     width: 6em;
+}
+.tooltip {
+    display: inline-block;
+    vertical-align: top;
+    position: relative;
+    line-height: 0.6lh;
+    margin: 0.4lh;
+    float: right;
+}
+.tooltip:before {
+    font-size: 0.7em;
+
+    aspect-ratio: 1;
+    border-radius: 0.5lh;
+    height: 1lh;
+    display: block;
+
+    content: "i";
+    background-color: #BCBCBC55;
+    text-align: center;
+    left: 100%;
+    margin-left: auto;
+    margin-right: 0;
+}
+.tooltip:hover:before {
+    background-color: #BCBCBC99;
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+}
+.tooltip > div {
+    display: none;
+    position: relative;
+    width: fit-content;
+    border: 4px solid #BCBCBC99;
+    top: 100%;
+    right: 0;
+    padding: 0.4lh;
+}
+.tooltip:hover > div {
+    display: block;
 }
 </style>
 </head>
@@ -778,11 +822,15 @@ Voicing:
 <form id="tuningForm">
 Tuning:
 <fieldset>
+<div class="tooltip"><div>
+Equal divisions of a just octave. See also: <a href="https://en.wikipedia.org/wiki/Equal_temperament">Equal temperament (Wikipedia)</a>, <a href="https://en.xen.wiki/w/EDO">EDO (Xenharmonic Wiki)</a>
+</div></div>
 <label><input type="radio" name="tuning" value="12-equal" oninput="updateTunings();" checked>12-tone equal</label>
 <label><input type="radio" name="tuning" value="17-equal" oninput="updateTunings();">17-tone equal</label>
 <label><input type="radio" name="tuning" value="19-equal" oninput="updateTunings();">19-tone equal</label>
 <label><input type="radio" name="tuning" value="22-equal" oninput="updateTunings();">22-tone equal</label>
 <label><input type="radio" name="tuning" value="31-equal" oninput="updateTunings();">31-tone equal</label>
+<label><input type="radio" name="tuning" value="43-equal" oninput="updateTunings();">43-tone equal</label>
 <label><input type="radio" name="tuning" value="53-equal" oninput="updateTunings();">53-tone equal</label>
 <br>
 <label><input type="radio" name="tuning" value="custom-equal" oninput="updateTunings();">Custom Equal —
@@ -792,16 +840,21 @@ Tuning:
 </label>
 </fieldset>
 <fieldset>
-<label><input type="radio" name="tuning" value="pythagorean" oninput="updateTunings();">Pythagorean</label>
-<label><input type="radio" name="tuning" value="quarter-comma" oninput="updateTunings();">Quarter-comma Meantone</label>
-<label><input type="radio" name="tuning" value="septimal" oninput="updateTunings();">Septimal Meantone</label>
+<div class="tooltip"><div>
+Tunings optimizing specific intervals (octaves, harmonic sevenths, perfect fifths, and major thirds) to be as close to their just ratios as possible.
+</div></div>
+<label><input type="radio" name="tuning" value="pythagorean" oninput="updateTunings();">Pythagorean (just fifth/octave)</label>
+<label><input type="radio" name="tuning" value="quarter-comma" oninput="updateTunings();">Quarter-comma Meantone (just third/octave)</label>
+<label><input type="radio" name="tuning" value="septimal" oninput="updateTunings();">Septimal Meantone (just seventh/octave)</label>
+<br>
+<label><input type="radio" name="tuning" value="minimax" oninput="updateTunings();">Minimax fifth/third, just octave</label>
+<label><input type="radio" name="tuning" value="minimax3" oninput="updateTunings();">Minimax fifth/third/octave</label>
+<label><input type="radio" name="tuning" value="squished" oninput="updateTunings();">Just fifth/third</label>
 </fieldset>
 <fieldset>
-<label><input type="radio" name="tuning" value="minimax" oninput="updateTunings();">Minimax Fifth/Third, Just Octave</label>
-<label><input type="radio" name="tuning" value="minimax3" oninput="updateTunings();">Minimax Octave/Fifth/Third</label>
-<label><input type="radio" name="tuning" value="squished" oninput="updateTunings();">Just Fifth/Third</label>
-</fieldset>
-<fieldset>
+<div class="tooltip"><div>
+See also: <a href="https://en.xen.wiki/w/The_Riemann_zeta_function_and_tuning">The Riemann zeta function and tuning (Xenharmonic Wiki)</a>
+</div></div>
 <label><input type="radio" name="tuning" value="12-zeta" oninput="updateTunings();">Zeta 12-tone equal</label>
 <label><input type="radio" name="tuning" value="19-zeta" oninput="updateTunings();">Zeta 19-tone equal</label>
 <label><input type="radio" name="tuning" value="22-zeta" oninput="updateTunings();">Zeta 22-tone equal</label>
@@ -810,6 +863,9 @@ Tuning:
 <label><input type="radio" name="tuning" value="53-zeta" oninput="updateTunings();">Zeta 53-tone equal</label>
 </fieldset>
 <fieldset>
+<div class="tooltip"><div>
+See also: <a href="https://en.wikipedia.org/wiki/Regular_diatonic_tuning">Regular diatonic tuning (Wikipedia)</a>
+</div></div>
 <label><input type="radio" name="tuning" value="custom" oninput="updateTunings();">Custom —
 <label>Whole step: <input type="number" id="wholeStep" min="1" max="2" step="any" value="1.122462048309373" oninput="updateRatioToCents(this, 'wholeStepCents'); updateTunings();"></label>
 <label>(= <input type="number" id="wholeStepCents" min="0" max="1200" step="any" value="200" oninput="updateCentsToRatio(this, 'wholeStep'); updateTunings();"> cents)</label>
