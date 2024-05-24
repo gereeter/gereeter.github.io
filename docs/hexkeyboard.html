@@ -12,12 +12,14 @@ const visualElements = new Map();
 // Global settings; these are set via the update* functions and their default values are specified in the forms
 let tuning = {
     basePitch: null,
+    name: null,
+    params: null,
     ratios: null, // we support any regular diatonic tuning system
 };
 let voicing = {
-    wave: null,
-    gains: null,
-    activeDecayTime: null,
+    name: null,
+    params: null,
+    sound: null,
 };
 let effects = {
     randomVolumeAmount: null,
@@ -95,14 +97,14 @@ function startNote(w, h, soft) {
         // Modulate by a triangular distribution in log space
         sound.volume *= Math.exp((Math.random() - Math.random()) * effects.randomVolumeAmount);
     }
-    for (let i = 0; i < voicing.gains.length; i++) {
+    for (let i = 0; i < voicing.sound.gains.length; i++) {
         const harmonic = i + 1;
 
         const oscillatorSettings = { frequency: tuning.basePitch * Math.pow(tuning.ratios.whole, w) * Math.pow(tuning.ratios.half, h) * harmonic };
-        if (voicing.wave instanceof PeriodicWave) {
-            oscillatorSettings.periodicWave = voicing.wave;
+        if (voicing.sound.wave instanceof PeriodicWave) {
+            oscillatorSettings.periodicWave = voicing.sound.wave;
         } else {
-            oscillatorSettings.type = voicing.wave;
+            oscillatorSettings.type = voicing.sound.wave;
         }
         const oscillator = new OscillatorNode(audioContext, oscillatorSettings);
 
@@ -113,9 +115,9 @@ function startNote(w, h, soft) {
         gainNode.gain.linearRampToValueAtTime(current + volume, time + 0.1);
         gainNode.gain.linearRampToValueAtTime(Math.max(current, volume), time + 0.15);*/
         const gain = new GainNode(audioContext, { gain: 0 });
-        gain.gain.setValueAtTime(sound.volume * voicing.gains[i], sound.startTime);
-        if (Number.isFinite(voicing.activeDecayTime)) {
-            gain.gain.setTargetAtTime(0, sound.startTime, voicing.activeDecayTime / harmonic);
+        gain.gain.setValueAtTime(sound.volume * voicing.sound.gains[i], sound.startTime);
+        if (Number.isFinite(voicing.sound.activeDecayTime)) {
+            gain.gain.setTargetAtTime(0, sound.startTime, voicing.sound.activeDecayTime / harmonic);
         }
 
         sound.oscillators.push(oscillator);
@@ -542,6 +544,29 @@ window.addEventListener("resize", updateKeyboard, { passive: true });
 
 ///// Keep the tuning form state synced with itself and the values being played. /////
 
+function equalObjects(obj1, obj2) {
+    if (Object.is(obj1, obj2)) {
+        return true;
+    } else if (!(obj1 instanceof Object) || !(obj2 instanceof Object)) {
+        return false;
+    } else {
+        const entries1 = Object.entries(obj1);
+        const entries2 = Object.entries(obj2);
+        if (entries1.length !== entries2.length) {
+            return false;
+        }
+        for (const [key, value] of entries1) {
+            if (!Object.hasOwn(obj2, key)) {
+                return false;
+            }
+            if (obj2[key] !== value) {
+                return false;
+            }
+        }
+        return true;
+    }
+}
+
 function tuningEDO(divisions, wholeStep, halfStep) {
     return {
         whole: Math.pow(2, wholeStep / divisions),
@@ -599,35 +624,57 @@ function updateTunings() {
     // We'll be called again in startNote.
     if (audioContext === null) { return; }
 
-    const tuningName = new FormData(document.getElementById("tuningForm")).get("tuning");
-    switch (tuningName) {
-    case "custom-equal":
-        const divisions = document.getElementById("equalDivisions").valueAsNumber;
-        const equalWhole = document.getElementById("equalWholeStep").valueAsNumber;
-        const equalHalf = document.getElementById("equalHalfStep").valueAsNumber;
-        if (equalWhole >= 1 && equalHalf >= 1) {
-            tuning.ratios = tuningEDO(divisions, equalWhole, equalHalf);
-        }
-        break;
-    case "custom":
-        const customWRatio = document.getElementById("wholeStep").valueAsNumber;
-        const customHRatio = document.getElementById("halfStep").valueAsNumber;
-        if (customWRatio >= 1 && customHRatio >= 1) {
-            tuning.ratios = { whole: customWRatio, half: customHRatio };
-        }
-        break;
-    default:
-        if (tuningMapping.has(tuningName)) {
-            tuning.ratios = tuningMapping.get(tuningName);
-        }
-        break;
-    }
-    
+    // Exit early if nothing has changed; this happens frequently since we call updateTunings in startNote.
+    const oldBasePitch = tuning.basePitch;
     const customBasePitch = document.getElementById("basePitch").valueAsNumber;
     if (customBasePitch >= 1) {
         tuning.basePitch = customBasePitch;
     }
+    const oldName = tuning.name;
+    tuning.name = new FormData(document.getElementById("tuningForm")).get("tuning");
+    const oldParams = tuning.params;
+    switch (tuning.name) {
+    case "custom-equal":
+        tuning.params = {
+            divisions: document.getElementById("equalDivisions").valueAsNumber,
+            whole: document.getElementById("equalWholeStep").valueAsNumber,
+            half: document.getElementById("equalHalfStep").valueAsNumber,
+        };
+        break;
+    case "custom":
+        tuning.params = {
+            wholeRatio: document.getElementById("wholeStep").valueAsNumber,
+            halfRatio: document.getElementById("halfStep").valueAsNumber,
+        };
+        break;
+    default:
+        tuning.params = null;
+        break;
+    }
+    if (oldBasePitch === tuning.basePitch && oldName === tuning.name && equalObjects(oldParams, tuning.params)) {
+        return;
+    }
 
+    // Fetch the tuning ratios
+    switch (tuning.name) {
+    case "custom-equal":
+        if (tuning.params.whole >= 1 && tuning.params.half >= 1) {
+            tuning.ratios = tuningEDO(tuning.params.divisions, tuning.params.whole, tuning.params.half);
+        }
+        break;
+    case "custom":
+        if (tuning.params.wholeRatio >= 1 && tuning.params.halfRatio >= 1) {
+            tuning.ratios = { whole: tuning.params.wholeRatio, half: tuning.params.halfRatio };
+        }
+        break;
+    default:
+        if (tuningMapping.has(tuning.name)) {
+            tuning.ratios = tuningMapping.get(tuning.name);
+        }
+        break;
+    }
+
+    // Update all the oscillators to the new pitches
     const currentTime = audioContext.currentTime;
     for (const [h, row] of notes) {
         for (const [w, note] of row) {
@@ -656,44 +703,59 @@ function updateVoicings() {
 
     const formData = new FormData(document.getElementById("voicingForm"));
 
-    const voicingName = formData.get("voicing");
-    switch (voicingName) {
+    // Exit early if nothing has changed; this happens frequently since we call updateVoicings in startNote.
+    const oldName = voicing.name;
+    voicing.name = formData.get("voicing");
+    const oldParams = voicing.params;
+    switch (voicing.name) {
+    case "custom-string":
+        voicing.params = {
+            location: document.getElementById("stringLocation").valueAsNumber,
+            decay: document.getElementById("stringDecay").valueAsNumber,
+        };
+        break;
+    default:
+        voicing.params = null;
+        break;
+    }
+    if (oldName === voicing.name && equalObjects(oldParams, voicing.params)) {
+        return;
+    }
+
+    switch (voicing.name) {
     case "sine":
     case "square":
     case "sawtooth":
     case "triangle":
-        voicing = voicingFromWave(voicingName);
+        voicing.sound = voicingFromWave(voicing.name);
         break;
     // These Fourier series are roughly approximated by hand and don't sound very good. They could do with a lot of
     // tweaking, even before accounting for things like noticeable attacks and variation in overtones with pitch.
     case "piano":
-        voicing = voicingFromWave(new PeriodicWave(audioContext, { real: new Float32Array([0, 1, 0.1, 0.33, 0.6, 0.4]) }));
+        voicing.sound = voicingFromWave(new PeriodicWave(audioContext, { real: new Float32Array([0, 1, 0.1, 0.33, 0.6, 0.4]) }));
         break;
     case "oboe":
-        voicing = voicingFromWave(new PeriodicWave(audioContext, { real: new Float32Array([0, 1, 0.95, 2.1, 0.17, 0.19, 0.22, 0.55, 0.3, 0.2]) }));
+        voicing.sound = voicingFromWave(new PeriodicWave(audioContext, { real: new Float32Array([0, 1, 0.95, 2.1, 0.17, 0.19, 0.22, 0.55, 0.3, 0.2]) }));
         break;
     case "clarinet":
-        voicing = voicingFromWave(new PeriodicWave(audioContext, { real: new Float32Array([0, 1, 0.36, 0.26, 0.01, 0.08, 0.2, 0.03]) }));
+        voicing.sound = voicingFromWave(new PeriodicWave(audioContext, { real: new Float32Array([0, 1, 0.36, 0.26, 0.01, 0.08, 0.2, 0.03]) }));
         break;
     case "horn":
-        voicing = voicingFromWave(new PeriodicWave(audioContext, { real: new Float32Array([0, 1, 0.39, 0.23, 0.21, 0.75, 0.57, 0.7, 0.53, 0.5, 0.28, 0.1, 0.06, 0.07]) }));
+        voicing.sound = voicingFromWave(new PeriodicWave(audioContext, { real: new Float32Array([0, 1, 0.39, 0.23, 0.21, 0.75, 0.57, 0.7, 0.53, 0.5, 0.28, 0.1, 0.06, 0.07]) }));
         break;
     case "custom-string":
-        const location = document.getElementById("stringLocation").valueAsNumber;
-        const decay = document.getElementById("stringDecay").valueAsNumber;
-
         // TODO: make this configurable?
         const fourierCount = 20;
-        voicing = {
+        voicing.sound = {
             wave: "sine",
             gains: new Float32Array(fourierCount),
-            activeDecayTime: -Math.log2(1 - decay),
+            activeDecayTime: -Math.log2(1 - voicing.params.decay),
         };
 
         // Compute the Fourier series of an asymmetric triangle wave. Since the vibrational modes of a string are
         // physically sine waves, the amount of vibration in each mode corresponds exactly to the Fourier decomposition
         // of the physical shape of the string. In a plucking configuration, this is a triangle.
-        const locationMin = Math.min(location, 1 - location);
+        const locationMin = Math.min(voicing.params.location, 1 - voicing.params.location);
         for (let i = 0; i < fourierCount; i++) {
             let harmonic = i + 1;
             if (locationMin < 0.01) {
@@ -702,9 +764,9 @@ function updateVoicings() {
                 // sinc(l * h * pi) / h
                 // ~= 1 / h - (l^2 * h * pi^2) / 6
                 // Note: above is the mathematical unnormalized sinc, not the signal processing normalized sinc
-                voicing.gains[i] = 1 / harmonic - harmonic * ((locationMin * locationMin) * (Math.PI * Math.PI / 6));
+                voicing.sound.gains[i] = 1 / harmonic - harmonic * ((locationMin * locationMin) * (Math.PI * Math.PI / 6));
             } else {
-                voicing.gains[i] = Math.sin(locationMin * harmonic * Math.PI) / (harmonic * harmonic);
+                voicing.sound.gains[i] = Math.sin(locationMin * harmonic * Math.PI) / (harmonic * harmonic);
             }
         }
 
@@ -712,11 +774,11 @@ function updateVoicings() {
         // the error of not using the full Fourier series.
         let totalCoeff = 0;
         for (let i = 0; i < fourierCount; i++) {
-            totalCoeff += Math.abs(voicing.gains[i]);
+            totalCoeff += Math.abs(voicing.sound.gains[i]);
         }
         const normalize = 1 / totalCoeff;
         for (let i = 0; i < fourierCount; i++) {
-            voicing.gains[i] *= normalize;
+            voicing.sound.gains[i] *= normalize;
         }
 
         break;
@@ -726,22 +788,22 @@ function updateVoicings() {
     for (const [h, row] of notes) {
         for (const [w, note] of row) {
             for (const sound of note.active) {
-                for (let i = voicing.gains.length; i < sound.gains.length; i++) {
+                for (let i = voicing.sound.gains.length; i < sound.gains.length; i++) {
                     sound.gains[i].gain.setValueAtTime(0, currentTime);
                 }
-                for (let i = 0; i < Math.min(voicing.gains.length, sound.oscillators.length); i++) {
+                for (let i = 0; i < Math.min(voicing.sound.gains.length, sound.oscillators.length); i++) {
                     const harmonic = i + 1;
-                    if (voicing.wave instanceof PeriodicWave) {
-                        sound.oscillators[i].setPeriodicWave(voicing.wave);
-                    } else if (sound.oscillators[i].type !== voicing.wave) {
-                        sound.oscillators[i].type = voicing.wave;
+                    if (voicing.sound.wave instanceof PeriodicWave) {
+                        sound.oscillators[i].setPeriodicWave(voicing.sound.wave);
+                    } else if (sound.oscillators[i].type !== voicing.sound.wave) {
+                        sound.oscillators[i].type = voicing.sound.wave;
                     }
                     sound.gains[i].gain.cancelScheduledValues(currentTime);
-                    if (Number.isFinite(voicing.activeDecayTime)) {
-                        sound.gains[i].gain.setValueAtTime(sound.volume * voicing.gains[i] * Math.exp(harmonic * (sound.startTime - currentTime) / voicing.activeDecayTime), currentTime);
-                        sound.gains[i].gain.setTargetAtTime(0, currentTime, voicing.activeDecayTime / harmonic);
+                    if (Number.isFinite(voicing.sound.activeDecayTime)) {
+                        sound.gains[i].gain.setValueAtTime(sound.volume * voicing.sound.gains[i] * Math.exp(harmonic * (sound.startTime - currentTime) / voicing.sound.activeDecayTime), currentTime);
+                        sound.gains[i].gain.setTargetAtTime(0, currentTime, voicing.sound.activeDecayTime / harmonic);
                     } else {
-                        sound.gains[i].gain.setValueAtTime(sound.volume * voicing.gains[i], currentTime);
+                        sound.gains[i].gain.setValueAtTime(sound.volume * voicing.sound.gains[i], currentTime);
                     }
                 }
             }
