@@ -308,13 +308,48 @@ function handleMouseLeave(event) {
 }
 
 function handleTouchPress(event) {
-    startNote(+event.target.dataset.w, +event.target.dataset.h, event.shiftKey);
     event.preventDefault();
+    startNote(+event.target.dataset.w, +event.target.dataset.h, event.shiftKey);
 }
 
 function handleTouchRelease(event) {
     endNote(+event.target.dataset.w, +event.target.dataset.h);
 }
+
+// Unfortunately, there isn't an equivalent of mouseenter/mouseleave for touch events. Therefore, simulate it
+// by tracking touches across the whole window and keeping track of where they currently are.
+const touchLocations = new Map();
+function stopTrackingTouch(event) {
+    for (const touch of event.changedTouches) {
+        let previous;
+        if (touchLocations.has(touch.identifier)) {
+            previous = touchLocations.get(touch.identifier);
+            touchLocations.delete(touch.identifier);
+        } else {
+            previous = touch.target;
+        }
+        previous.dispatchEvent(new Event("_touchleaveend"));
+    }
+}
+window.addEventListener("touchend", stopTrackingTouch, { passive: true });
+window.addEventListener("touchcancel", stopTrackingTouch, { passive: true });
+window.addEventListener("touchmove", function(event) {
+    for (const touch of event.changedTouches) {
+        const current = document.elementFromPoint(touch.clientX, touch.clientY);
+
+        if (!touchLocations.has(touch.identifier)) {
+            touchLocations.set(touch.identifier, touch.target);
+        }
+
+        const previous = touchLocations.get(touch.identifier);
+        touchLocations.set(touch.identifier, current);
+
+        if (previous !== current) {
+            previous.dispatchEvent(new Event("_touchleaveend"));
+            current.dispatchEvent(new Event("_touchenter"));
+        }
+    }
+}, { passive: true });
 
 function updateKeyboard() {
     visualElements.clear();
@@ -383,12 +418,13 @@ function updateKeyboard() {
                 polygon.classList.add("hex");
                 polygon.dataset.w = w;
                 polygon.dataset.h = h;
-                polygon.addEventListener("mousedown", handleMousePress);
-                polygon.addEventListener("mouseenter", handleMousePress);
+                polygon.addEventListener("mousedown", handleMousePress, { passive: true });
+                polygon.addEventListener("mouseenter", handleMousePress, { passive: true });
                 polygon.addEventListener("touchstart", handleTouchPress);
-                polygon.addEventListener("mouseup", handleMouseRelease);
-                polygon.addEventListener("mouseleave", handleMouseLeave);
-                polygon.addEventListener("touchend", handleTouchRelease);
+                polygon.addEventListener("_touchenter", handleTouchPress, { passive: true });
+                polygon.addEventListener("mouseup", handleMouseRelease, { passive: true });
+                polygon.addEventListener("mouseleave", handleMouseLeave, { passive: true });
+                polygon.addEventListener("_touchleaveend", handleTouchRelease, { passive: true });
                 svg.appendChild(polygon);
 
                 // Display our 0, 0 point (A440) specially.
